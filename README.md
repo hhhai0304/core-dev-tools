@@ -6,6 +6,7 @@ A local-only native macOS app for common developer tasks. It is built directly w
 
 - Multi-editor JSON Formatter with in-place Beautify and Minify actions
 - Per-editor indentation using 2 spaces (default), 4 spaces, or tabs
+- SQL Formatter with in-place Beautify and Minify, uppercase keywords, clause layout, and comment preservation
 - Read-only side-by-side JSON diff with aligned wrapping, line numbers, change highlights, difference counts, and jump navigation
 - Bidirectional JSON ↔ JSON string literal converter
 - Bidirectional URL percent encoder and decoder

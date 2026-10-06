@@ -1,8 +1,23 @@
 import AppKit
 import SwiftUI
 
-struct JSONCodeEditor: NSViewRepresentable {
+enum EditorSyntax {
+    case json
+    case sql
+
+    func tokenize(_ source: String) -> [EditorSyntaxToken] {
+        switch self {
+        case .json:
+            return JSONSyntaxHighlighter.tokenize(source)
+        case .sql:
+            return SQLSyntaxHighlighter.tokenize(source)
+        }
+    }
+}
+
+struct CodeEditor: NSViewRepresentable {
     @Binding var text: String
+    var syntax: EditorSyntax = .json
 
     func makeCoordinator() -> Coordinator {
         Coordinator(parent: self)
@@ -94,7 +109,7 @@ struct JSONCodeEditor: NSViewRepresentable {
     }
 
     final class Coordinator: NSObject, NSTextViewDelegate {
-        var parent: JSONCodeEditor
+        var parent: CodeEditor
         var isProgrammaticUpdate = false
 
         private weak var textView: NSTextView?
@@ -104,9 +119,9 @@ struct JSONCodeEditor: NSViewRepresentable {
         private var pendingBindingUpdate: DispatchWorkItem?
         private var generation = 0
         private var tokenizedGeneration = -1
-        private var tokens: [JSONSyntaxToken] = []
+        private var tokens: [EditorSyntaxToken] = []
 
-        init(parent: JSONCodeEditor) {
+        init(parent: CodeEditor) {
             self.parent = parent
         }
 
@@ -195,8 +210,9 @@ struct JSONCodeEditor: NSViewRepresentable {
                       let snapshot = self.textView?.string else {
                     return
                 }
-                DispatchQueue.global(qos: .userInitiated).async {
-                    let newTokens = JSONSyntaxHighlighter.tokenize(snapshot)
+                let syntax = self.parent.syntax
+                DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+                    let newTokens = syntax.tokenize(snapshot)
                     DispatchQueue.main.async { [weak self] in
                         guard let self,
                               self.generation == currentGeneration else {
@@ -318,12 +334,12 @@ enum EditorFindAction {
     }
 }
 
-struct JSONSyntaxToken {
+struct EditorSyntaxToken {
     let range: NSRange
-    let kind: JSONSyntaxKind
+    let kind: EditorSyntaxKind
 }
 
-enum JSONSyntaxKind: Equatable {
+enum EditorSyntaxKind: Equatable {
     case key
     case string
     case number
@@ -347,10 +363,10 @@ enum JSONSyntaxKind: Equatable {
 }
 
 enum JSONSyntaxHighlighter {
-    static func tokenize(_ source: String) -> [JSONSyntaxToken] {
+    static func tokenize(_ source: String) -> [EditorSyntaxToken] {
         let text = source as NSString
         let length = text.length
-        var tokens: [JSONSyntaxToken] = []
+        var tokens: [EditorSyntaxToken] = []
         tokens.reserveCapacity(min(length / 5, 100_000))
 
         var index = 0
@@ -377,10 +393,10 @@ enum JSONSyntaxHighlighter {
                 while lookahead < length, isWhitespace(text.character(at: lookahead)) {
                     lookahead += 1
                 }
-                let kind: JSONSyntaxKind = lookahead < length && text.character(at: lookahead) == 58
+                let kind: EditorSyntaxKind = lookahead < length && text.character(at: lookahead) == 58
                     ? .key
                     : .string
-                tokens.append(JSONSyntaxToken(range: NSRange(location: start, length: index - start), kind: kind))
+                tokens.append(EditorSyntaxToken(range: NSRange(location: start, length: index - start), kind: kind))
                 continue
             }
 
@@ -390,28 +406,28 @@ enum JSONSyntaxHighlighter {
                 while index < length, isNumberCharacter(text.character(at: index)) {
                     index += 1
                 }
-                tokens.append(JSONSyntaxToken(range: NSRange(location: start, length: index - start), kind: .number))
+                tokens.append(EditorSyntaxToken(range: NSRange(location: start, length: index - start), kind: .number))
                 continue
             }
 
             if matches("true", in: text, at: index) {
-                tokens.append(JSONSyntaxToken(range: NSRange(location: index, length: 4), kind: .keyword))
+                tokens.append(EditorSyntaxToken(range: NSRange(location: index, length: 4), kind: .keyword))
                 index += 4
                 continue
             }
             if matches("false", in: text, at: index) {
-                tokens.append(JSONSyntaxToken(range: NSRange(location: index, length: 5), kind: .keyword))
+                tokens.append(EditorSyntaxToken(range: NSRange(location: index, length: 5), kind: .keyword))
                 index += 5
                 continue
             }
             if matches("null", in: text, at: index) {
-                tokens.append(JSONSyntaxToken(range: NSRange(location: index, length: 4), kind: .keyword))
+                tokens.append(EditorSyntaxToken(range: NSRange(location: index, length: 4), kind: .keyword))
                 index += 4
                 continue
             }
 
             if character == 123 || character == 125 || character == 91 || character == 93 || character == 58 || character == 44 {
-                tokens.append(JSONSyntaxToken(range: NSRange(location: index, length: 1), kind: .punctuation))
+                tokens.append(EditorSyntaxToken(range: NSRange(location: index, length: 1), kind: .punctuation))
             }
             index += 1
         }
@@ -437,5 +453,43 @@ enum JSONSyntaxHighlighter {
 
     private static func isNumberCharacter(_ character: unichar) -> Bool {
         isDigit(character) || character == 43 || character == 45 || character == 46 || character == 69 || character == 101
+    }
+}
+
+enum SQLSyntaxHighlighter {
+    static func tokenize(_ source: String) -> [EditorSyntaxToken] {
+        var tokenizer = SQLTokenizer(source, strict: false)
+        guard let tokens = try? tokenizer.tokenize() else {
+            return []
+        }
+        var result: [EditorSyntaxToken] = []
+        result.reserveCapacity(tokens.count)
+        for token in tokens {
+            guard let kind = kind(for: token) else {
+                continue
+            }
+            result.append(EditorSyntaxToken(
+                range: NSRange(location: token.utf16Location, length: token.utf16Length),
+                kind: kind
+            ))
+        }
+        return result
+    }
+
+    private static func kind(for token: SQLToken) -> EditorSyntaxKind? {
+        switch token.kind {
+        case .word:
+            return SQLFormatter.isStylizedWord(token.text) ? .keyword : nil
+        case .string:
+            return .string
+        case .quotedIdentifier, .parameter:
+            return .key
+        case .number:
+            return .number
+        case .lineComment, .blockComment, .openParen, .closeParen, .comma, .semicolon, .dot:
+            return .punctuation
+        case .doubleColon, .op:
+            return nil
+        }
     }
 }

@@ -45,6 +45,7 @@ enum AppAppearance: String, Codable, CaseIterable, Identifiable {
 
 enum ToolKind: String, Codable, CaseIterable, Identifiable {
     case formatter
+    case sqlFormatter
     case diff
     case converter
     case urlCoding
@@ -55,6 +56,8 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .formatter:
             return "JSON Formatter"
+        case .sqlFormatter:
+            return "SQL Formatter"
         case .diff:
             return "JSON Diff"
         case .converter:
@@ -68,6 +71,8 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .formatter:
             return "Beautify or minify in place across multiple editors."
+        case .sqlFormatter:
+            return "Beautify or minify SQL queries in place."
         case .diff:
             return "Compare by key and JSON path, aligned to JSON 1 order."
         case .converter:
@@ -81,6 +86,8 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .formatter:
             return "curlybraces.square"
+        case .sqlFormatter:
+            return "cylinder.split.1x2"
         case .diff:
             return "arrow.left.arrow.right"
         case .converter:
@@ -94,6 +101,8 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
         switch self {
         case .formatter:
             return .blue
+        case .sqlFormatter:
+            return .teal
         case .diff:
             return .orange
         case .converter:
@@ -104,7 +113,7 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
     }
 }
 
-enum JSONIndentation: String, Codable, CaseIterable, Identifiable {
+enum Indentation: String, Codable, CaseIterable, Identifiable {
     case twoSpaces
     case fourSpaces
     case tab
@@ -137,7 +146,7 @@ enum JSONIndentation: String, Codable, CaseIterable, Identifiable {
 struct JSONFormatterEditor: Codable, Identifiable, Equatable {
     let id: UUID
     var text: String
-    var indentation: JSONIndentation
+    var indentation: Indentation
     var errorMessage: String?
 
     static func empty() -> JSONFormatterEditor {
@@ -158,6 +167,7 @@ struct WorkspaceTab: Codable, Identifiable, Equatable {
     var secondaryInput: String
     var output: String
     var formatterEditors: [JSONFormatterEditor]
+    var sqlIndentation: Indentation
     var diffLines: [JSONSideBySideLine]
     var diffAnchors: [JSONDifferenceAnchor]
     var isShowingDiffComparison: Bool
@@ -179,6 +189,7 @@ struct WorkspaceTab: Codable, Identifiable, Equatable {
             secondaryInput: "",
             output: "",
             formatterEditors: [.empty(), .empty()],
+            sqlIndentation: .twoSpaces,
             diffLines: [],
             diffAnchors: [],
             isShowingDiffComparison: false,

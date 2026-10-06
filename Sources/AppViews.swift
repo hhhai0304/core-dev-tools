@@ -254,6 +254,8 @@ private struct TabContentView: View {
             switch tool {
             case .formatter:
                 FormatterView(tab: $tab)
+            case .sqlFormatter:
+                SQLFormatterView(tab: $tab)
             case .diff:
                 DiffView(tab: $tab)
             case .converter:
@@ -355,6 +357,9 @@ private struct EditorPanel: View {
     var supportsPaste = false
     var supportsCopy = true
     var primaryAction: EditorPrimaryAction?
+    var secondaryAction: EditorPrimaryAction?
+    var accessory: AnyView?
+    var syntax: EditorSyntax = .json
 
     var body: some View {
         VStack(spacing: 0) {
@@ -362,6 +367,10 @@ private struct EditorPanel: View {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                 Spacer()
+
+                if let accessory {
+                    accessory
+                }
 
                 if let primaryAction {
                     Button(primaryAction.title, systemImage: primaryAction.systemImage) {
@@ -371,6 +380,15 @@ private struct EditorPanel: View {
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
                     .keyboardShortcut(.return, modifiers: .command)
+                }
+
+                if let secondaryAction {
+                    Button(secondaryAction.title, systemImage: secondaryAction.systemImage) {
+                        secondaryAction.action()
+                    }
+                    .labelStyle(.titleAndIcon)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
                 }
 
                 Button {
@@ -418,7 +436,7 @@ private struct EditorPanel: View {
             Divider()
 
             ZStack(alignment: .topLeading) {
-                JSONCodeEditor(text: $text)
+                CodeEditor(text: $text, syntax: syntax)
 
                 if text.isEmpty {
                     Text(placeholder)
@@ -521,7 +539,7 @@ private struct FormatterEditorPane: View {
                 Spacer(minLength: 4)
 
                 Picker("Indent", selection: $editor.indentation) {
-                    ForEach(JSONIndentation.allCases) { style in
+                    ForEach(Indentation.allCases) { style in
                         Text(style.label).tag(style)
                     }
                 }
@@ -572,7 +590,7 @@ private struct FormatterEditorPane: View {
             Divider()
 
             ZStack(alignment: .topLeading) {
-                JSONCodeEditor(text: $editor.text)
+                CodeEditor(text: $editor.text)
 
                 if editor.text.isEmpty {
                     Text("Paste JSON here…")
@@ -690,7 +708,7 @@ private struct ConverterView: View {
                 throw ConversionError.expectedString
             }
             let decoded = try parseJSON(inner)
-            tab.primaryInput = JSONRenderer.pretty(decoded, indentation: JSONIndentation.twoSpaces.value)
+            tab.primaryInput = JSONRenderer.pretty(decoded, indentation: Indentation.twoSpaces.value)
             tab.errorMessage = nil
         } catch {
             tab.errorMessage = error.localizedDescription
@@ -744,6 +762,69 @@ private struct URLCodingView: View {
     private func decode() {
         do {
             tab.primaryInput = try URLCoding.decode(tab.output)
+            tab.errorMessage = nil
+        } catch {
+            tab.errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct SQLFormatterView: View {
+    @Binding var tab: WorkspaceTab
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if let error = tab.errorMessage {
+                ErrorBanner(message: error)
+            }
+            EditorPanel(
+                title: "SQL",
+                placeholder: "Paste SQL here…",
+                text: $tab.primaryInput,
+                supportsPaste: true,
+                primaryAction: EditorPrimaryAction(
+                    title: "Beautify",
+                    systemImage: "rectangle.expand.vertical",
+                    action: beautify
+                ),
+                secondaryAction: EditorPrimaryAction(
+                    title: "Minify",
+                    systemImage: "rectangle.compress.vertical",
+                    action: minify
+                ),
+                accessory: AnyView(indentationPicker),
+                syntax: .sql
+            )
+        }
+        .padding(10)
+    }
+
+    private var indentationPicker: some View {
+        Picker("Indent", selection: $tab.sqlIndentation) {
+            ForEach(Indentation.allCases) { style in
+                Text(style.label).tag(style)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.menu)
+        .frame(width: 92)
+    }
+
+    private func beautify() {
+        do {
+            tab.primaryInput = try SQLFormatter.beautify(
+                tab.primaryInput,
+                indentation: tab.sqlIndentation.value
+            )
+            tab.errorMessage = nil
+        } catch {
+            tab.errorMessage = error.localizedDescription
+        }
+    }
+
+    private func minify() {
+        do {
+            tab.primaryInput = try SQLFormatter.minify(tab.primaryInput)
             tab.errorMessage = nil
         } catch {
             tab.errorMessage = error.localizedDescription

@@ -171,6 +171,73 @@ do {
     print("✗ URL coding tests threw: \(error)")
 }
 
+do {
+    let beautified = try SQLFormatter.beautify(
+        "select id,name from users u left join roles r on r.id=u.role_id where u.active=1 and u.score>=10 order by u.name desc limit 5",
+        indentation: "  "
+    )
+    let expected = """
+    SELECT id, name
+    FROM users u
+    LEFT JOIN roles r ON r.id = u.role_id
+    WHERE u.active = 1
+      AND u.score >= 10
+    ORDER BY u.name DESC
+    LIMIT 5
+    """
+    check(beautified == expected, "beautify lays out clauses, joins, and indented conditions")
+    check(beautified.contains("LEFT JOIN roles r ON"), "beautify uppercases multi-word join phrases and keeps ON inline")
+} catch {
+    failures += 1
+    print("✗ SQL beautify tests threw: \(error)")
+}
+
+do {
+    let subquery = try SQLFormatter.beautify(
+        "select * from t where x in (select id from u where ok=1)",
+        indentation: "  "
+    )
+    check(subquery.contains("IN (\n  SELECT id\n  FROM u\n  WHERE ok = 1\n)"), "beautify expands subqueries onto indented lines")
+    check(subquery.hasSuffix(")"), "expanded subquery closes at the outer indent")
+
+    let caseExpr = try SQLFormatter.beautify(
+        "select case when a=1 then 'x' else 'y' end as c from t",
+        indentation: "  "
+    )
+    check(caseExpr.contains("SELECT CASE\n  WHEN a = 1 THEN 'x'\n  ELSE 'y'\nEND AS c"), "beautify indents CASE branches and aligns END")
+} catch {
+    failures += 1
+    print("✗ SQL nesting tests threw: \(error)")
+}
+
+do {
+    let minified = try SQLFormatter.minify("SELECT a,  b -- trailing note\nFROM t /* mid */ WHERE x = 1 AND y BETWEEN 2 AND 4;")
+    check(minified == "SELECT a, b FROM t WHERE x = 1 AND y BETWEEN 2 AND 4;", "minify strips comments and collapses whitespace")
+    let unaryMinus = try SQLFormatter.minify("select a - -b from t")
+    check(unaryMinus == "select a - -b from t", "minify keeps a space between adjacent minus operators")
+    let concatenated = try SQLFormatter.minify("select 'a'||'b'")
+    check(concatenated == "select 'a' || 'b'", "minify normalizes operator spacing")
+    let nested = try SQLFormatter.minify("select *   from\nt\nwhere x in (select y from u)")
+    check(nested == "select * from t where x in (select y from u)", "minify emits compact single-line SQL")
+
+    let roundTrip = try SQLFormatter.minify(SQLFormatter.beautify("select id from users where id=1", indentation: "  "))
+    check(roundTrip == "SELECT id FROM users WHERE id = 1", "minify collapses beautified SQL back to one line")
+
+    let spaced = try SQLFormatter.beautify("select name from t", indentation: "    ")
+    check(spaced.contains("\nFROM"), "beautify newline-separates clauses under four-space indent")
+} catch {
+    failures += 1
+    print("✗ SQL minify tests threw: \(error)")
+}
+
+checkThrows("unterminated SQL strings are rejected") {
+    _ = try SQLFormatter.beautify("select 'oops", indentation: "  ")
+}
+
+checkThrows("unterminated SQL block comments are rejected") {
+    _ = try SQLFormatter.minify("select 1 /* never closed")
+}
+
 checkThrows("malformed URL percent escapes are rejected") {
     _ = try URLCoding.decode("hello%2world")
 }

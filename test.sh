@@ -8,13 +8,15 @@ swiftc -swift-version 5 \
   Sources/URLCoding.swift \
   Sources/JSONArrayAligner.swift \
   Sources/SideBySideDiff.swift \
+  Sources/SQLFormatter.swift \
   Tests/main.swift \
   -o build/tests/json-core-tests
 
 build/tests/json-core-tests
 
 swiftc -swift-version 5 \
-  Sources/JSONCodeEditor.swift \
+  Sources/CodeEditor.swift \
+  Sources/SQLFormatter.swift \
   Tests/EditorPerformance/main.swift \
   -o build/tests/editor-performance-tests \
   -framework AppKit \
