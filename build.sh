@@ -31,7 +31,8 @@ swiftc -O -swift-version 5 \
   "${SOURCES[@]}" \
   -o "$APP/Contents/MacOS/$EXECUTABLE" \
   -framework AppKit \
-  -framework SwiftUI
+  -framework SwiftUI \
+  -framework CoreImage
 
 cp "$ICON" "$APP/Contents/Resources/$ICON"
 

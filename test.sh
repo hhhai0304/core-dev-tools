@@ -9,8 +9,12 @@ swiftc -swift-version 5 \
   Sources/JSONArrayAligner.swift \
   Sources/SideBySideDiff.swift \
   Sources/SQLFormatter.swift \
+  Sources/JWTDecoder.swift \
+  Sources/QRCodes.swift \
   Tests/main.swift \
-  -o build/tests/json-core-tests
+  -o build/tests/json-core-tests \
+  -framework CoreImage \
+  -framework CoreGraphics
 
 build/tests/json-core-tests
 

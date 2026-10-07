@@ -10,6 +10,8 @@ A local-only native macOS app for common developer tasks. It is built directly w
 - Read-only side-by-side JSON diff with aligned wrapping, line numbers, change highlights, difference counts, and jump navigation
 - Bidirectional JSON ↔ JSON string literal converter
 - Bidirectional URL percent encoder and decoder
+- JWT decoder with pretty-printed header and payload, readable timestamp claims, and signature display
+- QR code generator with selectable error correction, PNG export, and a reader that decodes every QR code in an image
 - Native word-wrapped JSON editors with syntax highlighting and macOS Find (`⌘F`)
 - Browser-style tabs with drag-to-reorder and middle-click-to-close; every app launch starts fresh
 - System, Light, and Dark appearance modes with automatic preference restore

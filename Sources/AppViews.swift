@@ -262,6 +262,10 @@ private struct TabContentView: View {
                 ConverterView(tab: $tab)
             case .urlCoding:
                 URLCodingView(tab: $tab)
+            case .jwt:
+                JWTView(tab: $tab)
+            case .qrCode:
+                QRCodeView(tab: $tab)
             }
         } else {
             HomeView(tabID: tab.id)
@@ -338,7 +342,7 @@ private struct ToolCard: View {
                 .padding(.top, 5)
         }
         .padding(18)
-        .frame(maxWidth: .infinity, minHeight: 112, alignment: .topLeading)
+        .frame(maxWidth: .infinity, minHeight: 112, maxHeight: .infinity, alignment: .topLeading)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 14))
         .overlay(RoundedRectangle(cornerRadius: 14).stroke(Color.primary.opacity(0.08)))
     }
@@ -1024,6 +1028,557 @@ private extension JSONDiffStatus {
         case .removed:
             return .red
         }
+    }
+}
+
+private struct JWTView: View {
+    @Binding var tab: WorkspaceTab
+
+    private var timestamps: [JWTClaimTimestamp] {
+        guard let payload = try? parseJSON(tab.secondaryInput) else {
+            return []
+        }
+        return JWTDecoder.timestamps(in: payload)
+    }
+
+    private var signature: String? {
+        guard let signature = JWTDecoder.signatureSegment(of: tab.primaryInput),
+              !signature.isEmpty else {
+            return nil
+        }
+        return signature
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            if let error = tab.errorMessage {
+                ErrorBanner(message: error)
+            }
+            HSplitView {
+                EditorPanel(
+                    title: "JWT Token",
+                    placeholder: "Paste a JWT here…",
+                    text: $tab.primaryInput,
+                    supportsPaste: true,
+                    primaryAction: EditorPrimaryAction(
+                        title: "Decode",
+                        systemImage: "key",
+                        action: decode
+                    )
+                )
+                .frame(minWidth: 340)
+
+                VStack(spacing: 10) {
+                    VSplitView {
+                        EditorPanel(
+                            title: "Header",
+                            placeholder: "Decoded header appears here…",
+                            text: $tab.output
+                        )
+                        .frame(minHeight: 160)
+                        EditorPanel(
+                            title: "Payload",
+                            placeholder: "Decoded payload appears here…",
+                            text: $tab.secondaryInput
+                        )
+                        .frame(minHeight: 160)
+                    }
+
+                    if !timestamps.isEmpty || signature != nil {
+                        decodedFooter
+                    }
+                }
+                .frame(minWidth: 400)
+            }
+        }
+        .padding(10)
+    }
+
+    private var decodedFooter: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            ForEach(timestamps) { claim in
+                HStack(spacing: 8) {
+                    Text(claim.name)
+                        .font(.caption.monospaced().weight(.semibold))
+                        .foregroundStyle(claimColor(claim))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 2)
+                        .background(claimColor(claim).opacity(0.12), in: Capsule())
+                    Text(claim.date, format: .dateTime.year().month().day().hour().minute().second())
+                        .font(.callout)
+                    Text(relativeDescription(claim))
+                        .font(.callout)
+                        .foregroundStyle(claimColor(claim))
+                }
+            }
+
+            if let signature {
+                HStack(spacing: 8) {
+                    Text("Signature")
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                    Text(signature)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Button("Copy signature", systemImage: "doc.on.doc") {
+                        Clipboard.write(signature)
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .help("Copy signature")
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+    }
+
+    private func claimColor(_ claim: JWTClaimTimestamp) -> Color {
+        guard claim.name == "exp" else {
+            return .secondary
+        }
+        return claim.isPast ? .red : .green
+    }
+
+    private func relativeDescription(_ claim: JWTClaimTimestamp) -> String {
+        let relative = claim.date.formatted(.relative(presentation: .named))
+        guard claim.name == "exp" else {
+            return relative
+        }
+        return claim.isPast ? "expired \(relative)" : "expires \(relative)"
+    }
+
+    private func decode() {
+        do {
+            let decoded = try JWTDecoder.decode(tab.primaryInput)
+            tab.output = JSONRenderer.pretty(decoded.header, indentation: Indentation.twoSpaces.value)
+            tab.secondaryInput = JSONRenderer.pretty(decoded.payload, indentation: Indentation.twoSpaces.value)
+            tab.errorMessage = nil
+        } catch {
+            tab.errorMessage = error.localizedDescription
+        }
+    }
+}
+
+private struct QRCodeView: View {
+    @Binding var tab: WorkspaceTab
+    @State private var mode: Mode = .generate
+    @State private var correctionLevel: QRCodeLevel = .medium
+    @State private var generatedImage: NSImage?
+    @State private var decodedImage: NSImage?
+    @State private var isDropTargeted = false
+
+    private enum Mode {
+        case generate
+        case decode
+    }
+
+    private var matches: [QRCodeMatch] {
+        guard let data = tab.output.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode([QRCodeMatch].self, from: data) else {
+            return []
+        }
+        return decoded
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            HStack {
+                Picker("Mode", selection: $mode) {
+                    Text("Generate").tag(Mode.generate)
+                    Text("Decode").tag(Mode.decode)
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 180)
+
+                Spacer()
+            }
+
+            if let error = tab.errorMessage {
+                ErrorBanner(message: error)
+            }
+
+            switch mode {
+            case .generate:
+                generateView
+            case .decode:
+                decodeView
+            }
+        }
+        .padding(10)
+        .onAppear {
+            restoreDecodedImage()
+            if generatedImage == nil, !tab.primaryInput.isEmpty {
+                generate()
+            }
+        }
+    }
+
+    private var generateView: some View {
+        HSplitView {
+            EditorPanel(
+                title: "Text",
+                placeholder: "Type or paste the text to encode…",
+                text: $tab.primaryInput,
+                supportsPaste: true,
+                primaryAction: EditorPrimaryAction(
+                    title: "Generate",
+                    systemImage: "qrcode",
+                    action: generate
+                )
+            )
+            .frame(minWidth: 340)
+
+            VStack(spacing: 0) {
+                HStack {
+                    Text("QR Code")
+                        .font(.subheadline.weight(.semibold))
+
+                    Spacer()
+
+                    Picker("Error correction", selection: Binding(
+                        get: { correctionLevel },
+                        set: { level in
+                            correctionLevel = level
+                            if generatedImage != nil {
+                                generate()
+                            }
+                        }
+                    )) {
+                        ForEach(QRCodeLevel.allCases) { level in
+                            Text(level.rawValue).tag(level)
+                        }
+                    }
+                    .labelsHidden()
+                    .pickerStyle(.segmented)
+                    .frame(width: 140)
+                    .help("Error correction level")
+
+                    Button("Copy image", systemImage: "doc.on.doc", action: copyGeneratedImage)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .disabled(generatedImage == nil)
+                        .help("Copy QR image")
+
+                    Button("Save image…", systemImage: "square.and.arrow.down", action: saveGeneratedImage)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .disabled(generatedImage == nil)
+                        .help("Save QR code as PNG…")
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 38)
+                .background(Color.primary.opacity(0.035))
+
+                Divider()
+
+                ZStack {
+                    Color(nsColor: .textBackgroundColor)
+                    if let generatedImage {
+                        Image(nsImage: generatedImage)
+                            .resizable()
+                            .interpolation(.none)
+                            .aspectRatio(contentMode: .fit)
+                            .padding(24)
+                    } else {
+                        Text("Generate a QR code to preview it here")
+                            .font(.callout)
+                            .foregroundStyle(.tertiary)
+                    }
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+            .frame(minWidth: 340)
+        }
+    }
+
+    private var decodeView: some View {
+        HSplitView {
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Image")
+                        .font(.subheadline.weight(.semibold))
+
+                    Spacer()
+
+                    Button("Decode", systemImage: "qrcode.viewfinder", action: decodeImage)
+                        .labelStyle(.titleAndIcon)
+                        .buttonStyle(.borderedProminent)
+                        .controlSize(.small)
+                        .disabled(tab.secondaryInput.isEmpty)
+
+                    Button("Open image…", systemImage: "folder", action: openImage)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help("Open an image file…")
+
+                    Button("Paste image", systemImage: "doc.on.clipboard", action: pasteImage)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .help("Paste an image from the clipboard")
+
+                    Button("Clear", systemImage: "xmark.circle", action: clearImage)
+                        .labelStyle(.iconOnly)
+                        .buttonStyle(.borderless)
+                        .disabled(tab.secondaryInput.isEmpty)
+                        .help("Clear image and results")
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 38)
+                .background(Color.primary.opacity(0.035))
+
+                Divider()
+
+                ZStack {
+                    Color(nsColor: .textBackgroundColor)
+                    if let decodedImage {
+                        Image(nsImage: decodedImage)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .padding(8)
+                    } else {
+                        VStack(spacing: 8) {
+                            Image(systemName: "qrcode.viewfinder")
+                                .font(.system(size: 30))
+                                .foregroundStyle(.tertiary)
+                            Text("Drop an image here, paste from the clipboard, or open a file")
+                                .font(.callout)
+                                .foregroundStyle(.tertiary)
+                                .multilineTextAlignment(.center)
+                        }
+                        .padding(20)
+                    }
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+                .contentShape(Rectangle())
+                .onDrop(of: [UTType.image, UTType.fileURL], isTargeted: $isDropTargeted) { providers in
+                    handleDrop(providers)
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .stroke(
+                        isDropTargeted ? Color.accentColor : Color.primary.opacity(0.12),
+                        lineWidth: isDropTargeted ? 2 : 1
+                    )
+            )
+            .frame(minWidth: 340)
+
+            VStack(spacing: 0) {
+                HStack {
+                    Text("Decoded Content")
+                        .font(.subheadline.weight(.semibold))
+                    if !matches.isEmpty {
+                        Text("\(matches.count)")
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 6)
+                            .padding(.vertical, 2)
+                            .background(Color.accentColor, in: Capsule())
+                    }
+
+                    Spacer()
+
+                    Button("Copy all", systemImage: "doc.on.doc") {
+                        Clipboard.write(matches.map(\.message).joined(separator: "\n"))
+                    }
+                    .labelStyle(.iconOnly)
+                    .buttonStyle(.borderless)
+                    .disabled(matches.isEmpty)
+                    .help("Copy all decoded values")
+                }
+                .padding(.horizontal, 12)
+                .frame(height: 38)
+                .background(Color.primary.opacity(0.035))
+
+                Divider()
+
+                if matches.isEmpty {
+                    Text("Load an image to decode every QR code it contains")
+                        .font(.callout)
+                        .foregroundStyle(.tertiary)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .padding(20)
+                        .background(Color(nsColor: .textBackgroundColor))
+                } else {
+                    ScrollView {
+                        LazyVStack(spacing: 8) {
+                            ForEach(Array(matches.enumerated()), id: \.offset) { index, match in
+                                HStack(alignment: .top, spacing: 10) {
+                                    Text("\(index + 1)")
+                                        .font(.caption.monospacedDigit().weight(.bold))
+                                        .foregroundStyle(.white)
+                                        .frame(width: 20, height: 20)
+                                        .background(Color.accentColor, in: Circle())
+                                    Text(match.message)
+                                        .font(.callout.monospaced())
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    Button("Copy", systemImage: "doc.on.doc") {
+                                        Clipboard.write(match.message)
+                                    }
+                                    .labelStyle(.iconOnly)
+                                    .buttonStyle(.borderless)
+                                    .help("Copy value")
+                                }
+                                .padding(10)
+                                .background(Color.primary.opacity(0.04), in: RoundedRectangle(cornerRadius: 8))
+                            }
+                        }
+                        .padding(10)
+                    }
+                    .background(Color(nsColor: .textBackgroundColor))
+                }
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 10))
+            .overlay(RoundedRectangle(cornerRadius: 10).stroke(Color.primary.opacity(0.12)))
+            .frame(minWidth: 340)
+        }
+    }
+
+    private func generate() {
+        guard !tab.primaryInput.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            tab.errorMessage = "Enter some text to encode as a QR code."
+            return
+        }
+        guard let image = QRCodeGenerator.image(message: tab.primaryInput, correctionLevel: correctionLevel) else {
+            tab.errorMessage = "Couldn't generate a QR code for this input."
+            return
+        }
+        generatedImage = NSImage(cgImage: image, size: NSSize(width: image.width, height: image.height))
+        tab.errorMessage = nil
+    }
+
+    private func copyGeneratedImage() {
+        guard let generatedImage else {
+            return
+        }
+        NSPasteboard.general.clearContents()
+        NSPasteboard.general.writeObjects([generatedImage])
+    }
+
+    private func saveGeneratedImage() {
+        guard let generatedImage,
+              let cgImage = QRImageConversion.cgImage(from: generatedImage),
+              let png = QRImageConversion.pngData(from: cgImage) else {
+            return
+        }
+        let panel = NSSavePanel()
+        panel.allowedContentTypes = [.png]
+        panel.nameFieldStringValue = "qrcode.png"
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+        do {
+            try png.write(to: url)
+        } catch {
+            tab.errorMessage = "Couldn't save the image: \(error.localizedDescription)"
+        }
+    }
+
+    private func openImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        guard panel.runModal() == .OK, let url = panel.url else {
+            return
+        }
+        do {
+            guard let image = QRImageConversion.cgImage(from: try Data(contentsOf: url)) else {
+                tab.errorMessage = "\(url.lastPathComponent) isn't a readable image."
+                return
+            }
+            setImage(image)
+        } catch {
+            tab.errorMessage = "Couldn't open \(url.lastPathComponent): \(error.localizedDescription)"
+        }
+    }
+
+    private func pasteImage() {
+        guard let image = QRImageConversion.cgImageFromPasteboard() else {
+            tab.errorMessage = "The clipboard doesn't contain an image."
+            return
+        }
+        setImage(image)
+    }
+
+    private func clearImage() {
+        tab.secondaryInput = ""
+        tab.output = ""
+        decodedImage = nil
+        tab.errorMessage = nil
+    }
+
+    private func setImage(_ image: CGImage) {
+        tab.secondaryInput = QRImageConversion.base64PNG(from: image) ?? ""
+        decodeImage()
+    }
+
+    private func decodeImage() {
+        guard let source = QRImageConversion.cgImage(fromBase64PNG: tab.secondaryInput) else {
+            tab.errorMessage = "Load an image before decoding."
+            return
+        }
+        let found = QRCodeReader.decode(source)
+        if let encoded = try? JSONEncoder().encode(found) {
+            tab.output = String(decoding: encoded, as: UTF8.self)
+        }
+        decodedImage = QRImageAnnotator.annotated(source: source, matches: found)
+        tab.errorMessage = found.isEmpty ? "No QR codes found in this image." : nil
+    }
+
+    private func restoreDecodedImage() {
+        guard let source = QRImageConversion.cgImage(fromBase64PNG: tab.secondaryInput) else {
+            decodedImage = nil
+            return
+        }
+        decodedImage = QRImageAnnotator.annotated(source: source, matches: matches)
+    }
+
+    private func handleDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first else {
+            return false
+        }
+
+        if provider.hasItemConformingToTypeIdentifier(UTType.image.identifier) {
+            provider.loadDataRepresentation(forTypeIdentifier: UTType.image.identifier) { data, _ in
+                guard let data, let image = QRImageConversion.cgImage(from: data) else {
+                    return
+                }
+                DispatchQueue.main.async {
+                    setImage(image)
+                }
+            }
+            return true
+        }
+
+        if provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                let url = (item as? URL) ?? (item as? Data).flatMap {
+                    URL(dataRepresentation: $0, relativeTo: nil)
+                }
+                guard let url,
+                      let data = try? Data(contentsOf: url),
+                      let image = QRImageConversion.cgImage(from: data) else {
+                    return
+                }
+                DispatchQueue.main.async {
+                    setImage(image)
+                }
+            }
+            return true
+        }
+
+        return false
     }
 }
 

@@ -49,6 +49,8 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
     case diff
     case converter
     case urlCoding
+    case jwt
+    case qrCode
 
     var id: String { rawValue }
 
@@ -64,6 +66,10 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
             return "JSON ↔ String"
         case .urlCoding:
             return "URL Encode ↔ Decode"
+        case .jwt:
+            return "JWT Decoder"
+        case .qrCode:
+            return "QR Code"
         }
     }
 
@@ -79,6 +85,10 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
             return "Convert in either direction between JSON and a JSON string literal."
         case .urlCoding:
             return "Percent-encode or decode URLs and text in either direction."
+        case .jwt:
+            return "Decode a JWT's header, payload, and timestamp claims."
+        case .qrCode:
+            return "Generate QR codes from text, or decode every QR in an image."
         }
     }
 
@@ -94,6 +104,10 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
             return "arrow.left.arrow.right.square"
         case .urlCoding:
             return "link"
+        case .jwt:
+            return "key.fill"
+        case .qrCode:
+            return "qrcode"
         }
     }
 
@@ -109,6 +123,10 @@ enum ToolKind: String, Codable, CaseIterable, Identifiable {
             return .green
         case .urlCoding:
             return .purple
+        case .jwt:
+            return .pink
+        case .qrCode:
+            return .indigo
         }
     }
 }

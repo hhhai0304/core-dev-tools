@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 
 private var failures = 0
@@ -9,6 +10,18 @@ private func check(_ condition: @autoclosure () -> Bool, _ message: String) {
         failures += 1
         print("✗ \(message)")
     }
+}
+
+private struct TestFailure: Error {
+    let message: String
+    init(_ message: String) { self.message = message }
+}
+
+private func base64URLEncode(_ string: String) -> String {
+    Data(string.utf8).base64EncodedString()
+        .replacingOccurrences(of: "+", with: "-")
+        .replacingOccurrences(of: "/", with: "_")
+        .replacingOccurrences(of: "=", with: "")
 }
 
 private func checkThrows(_ message: String, _ operation: () throws -> Void) {
@@ -230,6 +243,59 @@ do {
     print("✗ SQL minify tests threw: \(error)")
 }
 
+do {
+    let header = base64URLEncode("{\"alg\":\"HS256\",\"typ\":\"JWT\"}")
+    let payload = base64URLEncode("{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"iat\":1516239022}")
+    let signature = base64URLEncode("signature")
+    let token = [header, payload, signature].joined(separator: ".")
+    let decoded = try JWTDecoder.decode(token)
+
+    check(JSONRenderer.minified(decoded.header) == "{\"alg\":\"HS256\",\"typ\":\"JWT\"}", "JWT header decodes to its JSON object")
+    check(JSONRenderer.minified(decoded.payload) == "{\"sub\":\"1234567890\",\"name\":\"John Doe\",\"iat\":1516239022}", "JWT payload decodes to its JSON object")
+    check(decoded.signature == signature, "JWT signature is preserved in base64url form")
+    check(JWTDecoder.signatureSegment(of: token) == signature, "signature segment can be read without decoding")
+
+    let timestamps = JWTDecoder.timestamps(in: decoded.payload)
+    check(timestamps.count == 1 && timestamps[0].name == "iat" && timestamps[0].date.timeIntervalSince1970 == 1516239022, "numeric timestamp claims convert to dates")
+} catch {
+    failures += 1
+    print("✗ JWT decode tests threw: \(error)")
+}
+
+do {
+    let message = "https://example.com/hello world"
+    guard let single = QRCodeGenerator.image(message: message, correctionLevel: .medium, pixels: 240) else {
+        throw TestFailure("QR generator returned nil")
+    }
+    let singleMatches = QRCodeReader.decode(single)
+    check(singleMatches.map(\.message) == [message], "generated QR round-trips back to its message")
+    check(singleMatches.first?.corners.count == 4, "decoded QR reports its corner points")
+
+    guard let first = QRCodeGenerator.image(message: "FIRST", correctionLevel: .high, pixels: 200),
+          let second = QRCodeGenerator.image(message: "SECOND", correctionLevel: .low, pixels: 200),
+          let context = CGContext(
+              data: nil,
+              width: 470,
+              height: 240,
+              bitsPerComponent: 8,
+              bytesPerRow: 0,
+              space: CGColorSpaceCreateDeviceRGB(),
+              bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+          ) else {
+        throw TestFailure("multi-QR fixture could not be built")
+    }
+    context.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 1))
+    context.fill(CGRect(x: 0, y: 0, width: 470, height: 240))
+    context.draw(first, in: CGRect(x: 20, y: 20, width: 200, height: 200))
+    context.draw(second, in: CGRect(x: 250, y: 20, width: 200, height: 200))
+    let composite = context.makeImage()!
+    let results = QRCodeReader.decode(composite).map(\.message).sorted()
+    check(results == ["FIRST", "SECOND"], "every QR code in a multi-code image is decoded")
+} catch {
+    failures += 1
+    print("✗ QR code tests threw: \(error)")
+}
+
 checkThrows("unterminated SQL strings are rejected") {
     _ = try SQLFormatter.beautify("select 'oops", indentation: "  ")
 }
@@ -252,6 +318,18 @@ checkThrows("duplicate object keys are rejected for exact diffing") {
 
 checkThrows("invalid JSON numbers are rejected") {
     _ = try parseJSON("{\"value\":01}")
+}
+
+checkThrows("JWTs with fewer than three segments are rejected") {
+    _ = try JWTDecoder.decode("abc.def")
+}
+
+checkThrows("JWTs with invalid base64url segments are rejected") {
+    _ = try JWTDecoder.decode(["!!", base64URLEncode("{\"test\":1}"), "c2ln"].joined(separator: "."))
+}
+
+checkThrows("JWT segments that are not JSON are rejected") {
+    _ = try JWTDecoder.decode([base64URLEncode("hello"), base64URLEncode("{\"test\":1}"), "c2ln"].joined(separator: "."))
 }
 
 if failures > 0 {
